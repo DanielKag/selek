@@ -12,7 +12,7 @@ dc_list='42\n84\n96\n208\nae1\nuw2-pub-1\nuw2-edt-1'
 namespaces_list='tb-viewer\nsite-assets\nviewer-server' 
 
 
-dc=$(echo $dc_list | fzf --sync --height 10 --header "Select DC:")
+dc=$(printf $dc_list | fzf --sync --height 10 --header "Select DC:")
 
 if [ -z "$dc" ]; then
   echo "No DC selected"
@@ -21,7 +21,7 @@ fi
 
 kubectl config use-context $dc
 
-namespace=$(echo $namespaces_list | fzf --sync --height 10 --header "Select namespace:")
+namespace=$(printf $namespaces_list | fzf --sync --height 10 --header "Select namespace:")
 if [ -z "$namespace" ]; then
   echo "No namespace selected"
   exit 0 
