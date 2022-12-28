@@ -1,43 +1,348 @@
 # !/bin/sh
+set -e
+# export context="42"
+# namespace="tb-viewer"
+# pod_name="thunderbolt-deploy-preview-amiry-884bcf599-tbpk4"
 
-echo " _          _                       _      _    "
-echo "| |        | |                     | |    | |   "
-echo "| | ___   _| |__   ___     ___  ___| | ___| | __"
-echo "| |/ / | | | '_ \\ / _ \\   / __|/ _ \\ |/ _ \\ |/ /"
-echo "|   <| |_| | |_) |  __/   \\__ \\  __/ |  __/   < "
-echo "|_|\\_\\\\__,_|_.__/ \___|   |___/\\___|_|\\___|_|\\_\\"
+# while getopts u:a:f: flag
+# do
+#     case "${flag}" in
+#         u) username=${OPTARG};;
+#         a) age=${OPTARG};;
+#         f) fullname=${OPTARG};;
+#     esac
+# done
+# echo "Username: $username";
+# echo "Age: $age";
+# echo "Full Name: $fullname";
 
-# Move to config file
-dc_list='42\n84\n96\n208\nae1\nuw2-pub-1\nuw2-edt-1' 
-namespaces_list='tb-viewer\nsite-assets\nviewer-server' 
 
+DARK_GRAY="${DARK_GRAY:-$(tput setaf 0)}"
+RED="${RED:-$(tput setaf 1)}"
+GREEN="${GREEN:-$(tput setaf 2)}"
+YELLOW="${YELLOW:-$(tput setaf 3)}"
+BLUE="${BLUE:-$(tput setaf 4)}"
+MAGENTA="${MAGENTA:-$(tput setaf 5)}"
+CYAN="${CYAN:-$(tput setaf 6)}"
+WHITE="${WHITE:-$(tput setaf 7)}"
+GRAY="${GRAY:-$(tput setaf 8)}"
+BOLD="${BOLD:-$(tput bold)}"
+UNDERLINE="${UNDERLINE:-$(tput sgr 0 1)}"
+INVERT="${INVERT:-$(tput sgr 1 0)}"
+NORMAL="${NORMAL:-$(tput sgr0)}"
 
-dc=$(printf $dc_list | fzf --sync --height 10 --header "Select DC:")
+selek_title() {
+  echo " _          _                       _      _    "
+  echo "| |        | |                     | |    | |   "
+  echo "| | ___   _| |__   ___     ___  ___| | ___| | __"
+  echo "| |/ / | | | '_ \\ / _ \\   / __|/ _ \\ |/ _ \\ |/ /"
+  echo "|   <| |_| | |_) |  __/   \\__ \\  __/ |  __/   < "
+  echo "|_|\\_\\\\__,_|_.__/ \___|   |___/\\___|_|\\___|_|\\_\\ v1.0"
+  echo "https://github.com/DanielKag/selek"
+}
 
-if [ -z "$dc" ]; then
-  echo "No DC selected"
+title=$(selek_title)
+
+if [ "$1" == "--version" ]; then
+  selek_title
   exit 0
 fi
 
-kubectl config use-context $dc
+export FZF_DEFAULT_OPTS="--bind esc:abort \
+                         --bind "tab:toggle-preview" \
+                         --layout reverse \
+                         --ansi --separator=╸ \
+                         --color=dark,separator:green,border:white --border rounded"
 
-namespace=$(printf $namespaces_list | fzf --sync --height 10 --header "Select namespace:")
-if [ -z "$namespace" ]; then
-  echo "No namespace selected"
-  exit 0 
-fi
+# Move to config file
+export namespaces_list='tb-viewer\nsite-assets\nviewer-server\nci' 
 
-describe_cmd="echo '{1}"
+select_context() {
 
-pod_name=$(kubectl get pods -n $namespace \
-             | fzf --header-lines 1 \
-                --ansi --exact \
-                --header $'↑/↓ - Select\n<Enter> - ssh to the pod\n<Esc> - Cancel' \
-                --preview "kubectl describe pod -n $namespace {1}" \
-                    | cut -d\  -f 1)
+  header="${GRAY}<Enter> - Select context | <Space> - Use context (will be saved for next session) ${NORMAL}"
+  
+  kubectl config get-contexts | sort -r 2>&1 \
+    | fzf --header-lines 1 --reverse \
+          --header "$header" \
+          --bind "space:execute(kubectl config use-context {1} &>/dev/null)" \
+          --bind "space:+reload(kubectl config get-contexts | sort -r)" \
+          --bind "space:+first" \
+          --prompt "Select Context: " \
+              | tr -s ' ' | cut -d ' ' -f 2
+}
 
-if [ -n "$pod_name" ]; then
-  kubectl exec -it -n tb-viewer $pod_name -- bash
-fi
+get_state_text() {
+    title="${MAGENTA}${BOLD}"
+    text="${MAGENTA}"
+    
+    namespace_text="${title}Namespace:${NORMAL} ${text}$namespace${NORMAL}"
+    service_text="${title}Service:${NORMAL} ${text}$service_name${NORMAL}"
+    pod_name_text="${title}Pod:${NORMAL} ${text}$pod_name${NORMAL}"
+    printf "${title}Context:${NORMAL} ${text}$context${NORMAL}
+${namespace:+$namespace_text}
+${service_name:+$service_text}
+${pod_name:+$pod_name_text}"
+}
 
+# select_namespace() {
+#     load_more_txt="Load more..."
+#     header="$(get_state_text)"
+
+#     choosen_namespace=$(printf "$namespaces_list\n$load_more_txt" \
+#         | fzf --prompt "Select namespace: " \
+#               --header "$header")
+#         
+#         if [[ "$choosen_namespace" == "$load_more_txt" ]]; then
+#           choosen_namespace=$(kubectl get ns -o name --context $context 2>&1 | cut -d/ -f2 \
+#               | fzf --prompt "Select namespace: " \
+#                     --header "$header")
+#         fi
+#         
+#         echo "$choosen_namespace"
+
+# }
+
+get_updated_services_from_kube() {
+    # on refresh:
+    result=$(kubectl get services --all-namespaces --context $context -o wide)
+    namespaces=$(printf "$result" | tail -n +2 |  cut -w -f 1 | uniq | sed -e 's/$/ aALL/')
+    services=$(printf "$result" | cut -w -f 1,2,8)
+    namespaces_and_services=$(printf "$services\n$namespaces" | column -t 2>&1 |  sort -k 1)
+    printf "$namespaces_and_services" 
+}
+
+get_services_with_cache() {
+  cache_context=$1
+  SELEK_FOLDER="$HOME/.selek"
+  CACHE_FILE="services_cache${cache_context}.txt"
+  CACHE_FILE_FULL_PATH="${SELEK_FOLDER}/${CACHE_FILE}"
+
+  if [ ! -d $SELEK_FOLDER ]; then
+    mkdir $SELEK_FOLDER
+  fi
+
+
+  if [ ! -f $CACHE_FILE_FULL_PATH ]; then
+    result=$(get_updated_services_from_kube)
+    printf "$result" > $CACHE_FILE_FULL_PATH
+  fi
+
+  cat $CACHE_FILE_FULL_PATH
+}
+
+
+select_service() {
+
+  state_text=$(get_state_text)
+  header="${GRAY}<Enter> - Choose service or namespace | R - Reload${NORMAL}  
+${state_text}"
+  
+  get_services_with_cache $context \
+    | fzf --header-lines 1 --reverse \
+          --bind='D:page-down' \
+          --bind='U:page-down' \
+          --header "$header" \
+          --with-nth=1,2 \
+          --prompt "Select Namespace/ Service: "
+}
+
+select_pod() {
+
+  if [ -n $selector ]; then
+      selector_filter="--selector=$selector"
+  fi
+   
+  state_text=$(get_state_text)
+  header="${GRAY}<Enter> - Go to options | R - Reload | D - Delete Pod | <Tab> - Toggle describe${NORMAL}
+${state_text}"
+
+  get_pods_command="kubectl get pods -o wide -L version -n $namespace $selector_filter --context $context 2>&1"
+  delete_pod_command="kubectl delete pod --wait=false -n $namespace {1} --context $context"
+  # delete_pod_and_reload="${delete_pod_command} & ${get_pods_command}"
+  delete_pod_and_reload="kubectl get pods -o wide -L version -n $namespace $selector_filter --context $context 2>&1 & kubectl delete pod -n $namespace {1} --context $context"
+  eval $get_pods_command \
+      | fzf --header-lines 1 \
+      --exact \
+      --prompt "Select pod: " \
+      --header "$header" \
+      --bind='tab:toggle-preview' \
+      --bind="D:execute(${delete_pod_command})" \
+      --bind="D:+reload(${get_pods_command})" \
+      --bind="R:reload(${get_pods_command})" \
+      --preview-window down \
+      --preview-window hidden \
+      --preview "kubectl describe pod -n $namespace {1} --context $context"  \
+        | cut -d\  -f 1
+}
+
+# confirm() {
+
+#   msg=$1
+#   choices="Yes\nNo"
+
+#   header="${GRAY}F - First | L - Last | <Enter> - Copy | <Tab> - Select | A - Select all${NORMAL}
+# $(get_state_text)"
+#   
+#   result=$(printf "$msg\n$choices" \
+#       | fzf --header-lines 1 \
+#             --header "$header")
+
+#   if [ "$result" = "Yes" ]; then
+#   fi
+# }
+
+
+selek_ssh() {
+  if [ -n "$pod_name" ]; then
+    kubectl --context $context -n $namespace exec -it $pod_name -- bash
+  fi
+}
+
+selek_describe() {
+  if [ -n "$pod_name" ]; then
+    kubectl describe pod -n $namespace $pod_name --context $context | fzf --exact | echo dummy > /dev/null
+  fi
+}
+
+selek_logs() {
+  extra_args="$1"
+  # preview_command="printf {} | jq | grep --color=always -E '{q}|$'"
+  kube_logs_command="kubectl --context $context logs -n $namespace $pod_name $extra_args"
+  # header=''"'${GRAY}F - First | L - Last | <Tab> - Select | A - Select all\n $kube_logs_command'
+  preview_command="printf {} | jq -C 2> /dev/null || echo {} | fold -s"
+
+  header="${GRAY}F - First | L - Last | <Enter> - Copy message | C - Copy kube command | <Tab> - Toggle preview ${NORMAL}
+$(get_state_text)"
+
+  eval $kube_logs_command  2>&1 \
+      | sed 's/%/$/g' \
+      | fzf --bind 'L:last',F:first,A:select-all \
+            --bind "enter:execute(printf {} | pbcopy)" \
+            --bind "C:execute(printf '$kube_logs_command' | pbcopy)" \
+            --exact \
+            --multi \
+            --preview "$preview_command" \
+            --header "$header" \
+     | echo dummy > /dev/null
+}
+
+
+selek_delete() {
+  delete_pod_command="kubectl delete pod -n $namespace $pod_name --context $context"
+  printf "$delete_pod_command" | pbcopy
+}
+
+selek_copy() {
+  printf $pod_name | pbcopy
+}
+
+
+menu_item() {
+  printf '%s%s%-15s%s %s%s%s' "$GREEN" "$BOLD" "$1" "$NORMAL" "$GRAY" "$2" "$NORMAL"
+  echo
+}
+
+print_commands() {
+  menu_item 'ssh' 'SSH to the machine' 
+  menu_item 'logs' 'Get machine logs' 
+  menu_item 'previous-logs' 'logs to the previous pod' 
+  menu_item 'describe' 'Get more details about the pod' 
+  menu_item 'copy' 'Copy pod name' 
+  menu_item 'delete' 'Copy delete command' 
+  menu_item 'back' 'Choose a different pod' 
+}
+
+selek_run_command() {
+  command=$1
+
+  case $command in
+    back)
+      pod_name=$(select_pod)
+      if [ -z $pod_name ]; then
+        stay_in_selek=false
+      fi
+      ;;
+    ssh)
+      selek_ssh
+      stay_in_selek=false
+      ;;
+    copy)
+      selek_copy $pod_name
+      ;;
+    delete)
+      selek_delete
+      ;;
+    logs)
+      selek_logs
+      ;;
+    logs-to-file)
+      selek_logs > logs.txt
+      ;;
+    previous-logs)
+      selek_logs --previous
+      ;;
+    describe)
+      selek_describe
+      ;;
+    *)
+      printf "Wrong command $command"
+      ;;
+  esac
+}
+
+
+fzf_commands() {
+  commands_header="$(get_state_text)"
+  fzf --ansi --exact --header "$commands_header" 
+}
+
+main() {
+  if [ -z "$context" ]; then
+    context=$(select_context)
+
+    if [ -z "$context" ]; then
+      echo "No context selected"
+      exit 0
+    fi
+  fi
+
+  if [ -z "$namespace" ]; then
+    service_result=$(select_service)
+    
+    if [ -z "$service_result" ]; then
+      echo "No service selected"
+      exit 0 
+    fi
+    
+    namespace=$(echo $service_result | cut -f1 -d' ')
+    service_name=$(echo $service_result | cut -f2 -d' ')
+    selector=$(echo $service_result | cut -f3 -d' ')
+    
+  fi
+
+  if [ -z "$pod_name" ]; then
+    pod_name=$(select_pod)
+    if [ -z "$pod_name" ]; then
+      echo "No pod selected"
+      exit 0 
+    fi
+  fi
+
+
+  export stay_in_selek=true
+  while [ $stay_in_selek = true ]
+  do
+    if [ -n "$pod_name" ]; then
+          command=$(print_commands| fzf_commands)
+
+          if [ -z "$command" ]; then
+            exit 0
+          fi
+
+          selek_run_command $command 
+    fi
+  done
+}
+
+main
 
