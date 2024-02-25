@@ -333,13 +333,14 @@ main() {
   while [ $stay_in_selek = true ]
   do
     if [ -n "$pod_name" ]; then
+      if [ -z "$command" ]; then
           command=$(print_commands| fzf_commands)
 
           if [ -z "$command" ]; then
             exit 0
           fi
-
-          selek_run_command $command 
+        fi
+        selek_run_command $command
     fi
   done
 }
