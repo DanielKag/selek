@@ -105,7 +105,8 @@ ${pod_name:+$pod_name_text}"
 get_updated_services_from_kube() {
     # on refresh:
     result=$(kubectl get services --all-namespaces --context $context -o wide)
-    namespaces=$(printf "$result" | tail -n +2 |  cut -w -f 1 | uniq | sed -e 's/$/ aALL/')
+    namespaces_from_kube=$(kubectl get namespaces --context $context)
+    namespaces=$(printf "$namespaces_from_kube" | tail -n +2 |  cut -w -f 1 | uniq | sed -e 's/$/ ALL/')
     services=$(printf "$result" | cut -w -f 1,2,8)
     namespaces_and_services=$(printf "$services\n$namespaces" | column -t 2>&1 |  sort -k 1)
     printf "$namespaces_and_services" 
@@ -134,7 +135,7 @@ get_services_with_cache() {
 select_service() {
 
   state_text=$(get_state_text)
-  header="${GRAY}<Enter> - Choose service or namespace | R - Reload${NORMAL}  
+  header="${GRAY}<Enter> - Choose service or namespace${NORMAL}  
 ${state_text}"
   
   get_services_with_cache $context \
